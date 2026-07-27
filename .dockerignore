@@ -1,0 +1,9 @@
+.git
+.gitignore
+*.exe
+server_output.txt
+server_error.txt
+homepage.png
+product-details.png
+README.md
+frontend/
