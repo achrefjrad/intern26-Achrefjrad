@@ -44,6 +44,17 @@ const (
 	SubcatOutillageMain              Subcategory = "Outillage à main"
 )
 
+var SubcategoryToCategory map[Subcategory]Category
+
+func init() {
+	SubcategoryToCategory = make(map[Subcategory]Category, 32)
+	for cat, subs := range CategorySubcategories {
+		for _, sub := range subs {
+			SubcategoryToCategory[sub] = cat
+		}
+	}
+}
+
 var CategorySubcategories = map[Category][]Subcategory{
 	CategoryInformatique: {
 		SubcatComposants,

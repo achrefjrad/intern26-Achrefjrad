@@ -3,6 +3,7 @@
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import { fetchFilterSchema } from "@/services/api";
+import type { FilterGroup } from "@/services/api";
 
 const FILTER_LABELS: Record<string, string> = {
   marque: "Marque",
@@ -44,27 +45,8 @@ const FILTER_LABELS: Record<string, string> = {
   largeur_coupe: "Largeur de coupe",
 };
 
-const filterKeyMapping: Record<string, string> = {
-  "mémoire": "ram",
-  "mémoire vive (ram)": "ram",
-  "taille ecran": "écran",
-  "taille de l'écran": "écran",
-  "capacité de stockage": "stockage",
-  "disque dur": "stockage",
-  "processeur": "processeur",
-  "système d'exploitation": "os",
-  "carte graphique": "carte_graphique",
-};
-
 function normalizeFilterValue(value: string): string {
   return value.replace(/\bGo\b/g, "GB").replace(/\bTo\b/g, "TB");
-}
-
-function translateFilterName(name: string): string {
-  const lower = name.toLowerCase().trim();
-  if (filterKeyMapping[lower]) return filterKeyMapping[lower];
-  const noAccents = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return noAccents.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
 // ---- Sub-components ----
@@ -191,7 +173,7 @@ function CheckboxList({
   onToggle,
 }: {
   paramKey: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; count?: number }[];
   searchParams: URLSearchParams;
   onToggle: (key: string, value: string, checked: boolean) => void;
 }) {
@@ -211,7 +193,10 @@ function CheckboxList({
               onChange={(e) => onToggle(paramKey, opt.value, e.target.checked)}
               className="accent-blue-600 rounded"
             />
-            {opt.label}
+            <span className="flex-1">{opt.label}</span>
+            {opt.count !== undefined && (
+              <span className="text-[10px] text-gray-400 tabular-nums">({opt.count})</span>
+            )}
           </label>
         );
       })}
@@ -233,14 +218,14 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
 
   const subcategory = searchParams.get("subcategory");
 
-  const [schemaFilters, setSchemaFilters] = useState<Record<string, string[]> | null>(null);
+  const [schemaGroups, setSchemaGroups] = useState<FilterGroup[] | null>(null);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [schemaError, setSchemaError] = useState(false);
 
   // Fetch filter schema from API when subcategory changes
   useEffect(() => {
     if (!subcategory) {
-      setSchemaFilters(null);
+      setSchemaGroups(null);
       return;
     }
 
@@ -251,7 +236,7 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
     fetchFilterSchema(subcategory)
       .then((res) => {
         if (!cancelled) {
-          setSchemaFilters(res.filters || {});
+          setSchemaGroups(res.filters || []);
           setSchemaLoading(false);
         }
       })
@@ -265,15 +250,13 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
     return () => { cancelled = true; };
   }, [subcategory]);
 
-  // Price state — only used for input responsiveness, never pushes to router
+  // Price state
   const [minPrice, setMinPrice] = useState(searchParams.get("min_price") ?? "");
   const [maxPrice, setMaxPrice] = useState(searchParams.get("max_price") ?? "");
 
-  // Keep a ref with the committed price values for commitPrice
   const minPriceRef = useRef(minPrice);
   const maxPriceRef = useRef(maxPrice);
 
-  // Sync from URL when browser navigates back/forward
   useEffect(() => {
     setMinPrice(searchParams.get("min_price") ?? "");
     setMaxPrice(searchParams.get("max_price") ?? "");
@@ -281,7 +264,6 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
     maxPriceRef.current = searchParams.get("max_price") ?? "";
   }, [searchParams]);
 
-  // Build and push URL with current price refs + current search params
   function commitPrice() {
     const params = new URLSearchParams(searchParams.toString());
     if (minPriceRef.current) params.set("min_price", minPriceRef.current);
@@ -339,17 +321,20 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
         const schemaRendered = new Set<string>();
 
         const schemaEls = !schemaLoading && !schemaError
-          ? Object.entries(schemaFilters || {}).map(([frenchTitle, values]) => {
-              const esKey = translateFilterName(frenchTitle);
-              schemaRendered.add(esKey);
-              const paramKey = `spec_${esKey}`;
+          ? (schemaGroups || []).map((group) => {
+              schemaRendered.add(group.key);
+              const paramKey = `spec_${group.key}`;
               return (
-                <CollapsibleSection key={esKey} title={frenchTitle}>
+                <CollapsibleSection key={group.key} title={group.name}>
                   <CheckboxList
                     paramKey={paramKey}
-                    options={(values || []).map((v) => ({ value: normalizeFilterValue(v), label: v }))}
+                    options={group.values.map((v) => ({
+                      value: normalizeFilterValue(v.value),
+                      label: v.value,
+                      count: v.count,
+                    }))}
                     searchParams={searchParams}
-                    onToggle={(_key, value, checked) => handleSpecToggle(esKey, value, checked)}
+                    onToggle={(_key, value, checked) => handleSpecToggle(group.key, value, checked)}
                   />
                 </CollapsibleSection>
               );

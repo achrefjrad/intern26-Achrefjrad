@@ -41,9 +41,21 @@ export async function fetchProductById(id: string): Promise<ProductDetailRespons
   return res.json();
 }
 
+export interface FilterValue {
+  value: string;
+  count: number;
+}
+
+export interface FilterGroup {
+  name: string;
+  key: string;
+  values: FilterValue[];
+}
+
 export interface FilterSchemaResponse {
   subcategory: string;
-  filters: Record<string, string[]>;
+  category?: string;
+  filters: FilterGroup[];
   updatedAt: string;
 }
 

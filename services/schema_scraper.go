@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"project/types"
 
@@ -114,6 +115,20 @@ var subcategorySources = []SubcategorySource{
 		{Merchant: "beautystore", URL: "https://beautystore.tn/363-coffrets"},
 		{Merchant: "fatales", URL: "https://www.fatales.tn/506-coffret"},
 	}},
+	// NOTE: Fatales (PrestaShop) has no .facet sidebar on any page despite being a
+	// PrestaShop store; only BeautyStore provides filters for Santé subcategories.
+	{Category: "Santé & Beauté", Subcategory: types.SubcatHygieneToilette, Sources: []MerchantURL{
+		{Merchant: "beautystore", URL: "https://beautystore.tn/205-soin-corps"},
+	}},
+	{Category: "Santé & Beauté", Subcategory: types.SubcatParapharmacieSante, Sources: []MerchantURL{
+		{Merchant: "beautystore", URL: "https://beautystore.tn/330-solaire"},
+	}},
+	{Category: "Santé & Beauté", Subcategory: types.SubcatBebeMaman, Sources: []MerchantURL{
+		{Merchant: "beautystore", URL: "https://beautystore.tn/403-soin-bebe-et-enfant"},
+	}},
+	{Category: "Santé & Beauté", Subcategory: types.SubcatSanteBeauteAutres, Sources: []MerchantURL{
+		{Merchant: "beautystore", URL: "https://beautystore.tn/330-solaire"},
+	}},
 
 	// ======= Électroménager =======
 	{Category: "Électroménager", Subcategory: types.SubcatMachineALaver, Sources: []MerchantURL{
@@ -161,8 +176,10 @@ var subcategorySources = []SubcategorySource{
 		{Merchant: "egm", URL: "https://egm.tn/nos-categories/jardinage/pompe-et-arrosage"},
 	}},
 	{Category: "Jardinage & Bricolage", Subcategory: types.SubcatOutillageMain, Sources: []MerchantURL{
-		{Merchant: "bigdepot", URL: "https://bigdepot.tn/21-outillage-a-main"},
-		{Merchant: "egm", URL: "https://egm.tn/nos-categories/outil-a-main"},
+		// Both BigDepot and EGM were removed because neither site renders sidebar filters
+		// on their category pages. BigDepot's Electrive theme does not include the
+		// PrestaShop faceted search module; EGM is a Next.js app with no filter UI.
+		// This subcategory falls back to ES aggregation facets from categorySpecFields.
 	}},
 }
 
@@ -176,6 +193,57 @@ var ignoredFilterTitles = map[string]bool{
 var reWhitespace = regexp.MustCompile(`\s+`)
 var reCountSuffix = regexp.MustCompile(`\s+\(\d+\)\s*$`)
 var reTrailingCount = regexp.MustCompile(`\s+\d+\s*$`)
+
+// Normalization regexes (compiled once)
+var reStorageGB = regexp.MustCompile(`(?i)^(\d+)\s*(go|gb)$`)
+var reStorageTB = regexp.MustCompile(`(?i)^(\d+)\s*(to|tb)$`)
+var reWarranty = regexp.MustCompile(`(?i)^(\d+)\s*(an?s?|year?s?)?$`)
+var reInch = regexp.MustCompile(`(?i)^([\d.,]+)\s*(pouces?|inch|inches|″|'')?\s*$`)
+
+// -------- Normalization --------
+
+func toTitle(s string) string {
+	lower := strings.ToLower(s)
+	prev := ' '
+	chars := []rune(lower)
+	for i, r := range chars {
+		if prev == ' ' {
+			chars[i] = unicode.ToTitle(r)
+		}
+		prev = r
+	}
+	return string(chars)
+}
+
+func normalizeFilterValue(groupTitle, rawValue string) string {
+	v := strings.TrimSpace(rawValue)
+	v = reWhitespace.ReplaceAllString(v, " ")
+
+	// Memory/RAM: "8go" / "8 gb" → "8 Go"
+	v = reStorageGB.ReplaceAllString(v, "${1} Go")
+	// Storage: "1to" / "1 tb" → "1 To"
+	v = reStorageTB.ReplaceAllString(v, "${1} To")
+
+	// Warranty: group-title must contain "garantie"
+	if strings.Contains(strings.ToLower(groupTitle), "garantie") {
+		if matches := reWarranty.FindStringSubmatch(v); len(matches) > 0 {
+			num := matches[1]
+			if num == "1" {
+				v = "1 an"
+			} else {
+				v = num + " ans"
+			}
+		}
+	}
+
+	// Screen sizes: "15.6 pouces" / "15.6''" → "15.6\""
+	v = reInch.ReplaceAllString(v, "$1\"")
+
+	// Title-case for consistent dedup display
+	v = toTitle(v)
+
+	return v
+}
 
 // -------- Scraper: Tunisianet (custom PrestaShop module .af_filter) --------
 
@@ -558,19 +626,19 @@ func MergeSubcategorySchemas(schemas []*CategorySchema) *CategorySchema {
 
 			seenVals := make(map[string]bool)
 			for _, v := range merged.Filters[canonical] {
-				seenVals[strings.ToLower(strings.TrimSpace(v))] = true
+				seenVals[strings.ToLower(v)] = true
 			}
 			for _, v := range vals {
-				trimmed := strings.TrimSpace(v)
-				if trimmed == "" {
+				normalized := normalizeFilterValue(key, v)
+				if normalized == "" {
 					continue
 				}
-				lowV := strings.ToLower(trimmed)
-				if seenVals[lowV] {
+				normKey := strings.ToLower(normalized)
+				if seenVals[normKey] {
 					continue
 				}
-				seenVals[lowV] = true
-				merged.Filters[canonical] = append(merged.Filters[canonical], trimmed)
+				seenVals[normKey] = true
+				merged.Filters[canonical] = append(merged.Filters[canonical], normalized)
 			}
 		}
 	}
@@ -609,6 +677,9 @@ func ScrapeFilterSchemas() map[types.Subcategory]map[string][]string {
 		}
 
 		if len(schemas) == 0 {
+			if subcat == types.SubcatOutillageMain || string(subcat) == "Outillage à main" {
+				log.Printf("[schema-scraper] Outillage à main: 0 schemas scraped (no merchants with sidebar filters)")
+			}
 			continue
 		}
 
@@ -620,6 +691,15 @@ func ScrapeFilterSchemas() map[types.Subcategory]map[string][]string {
 		results[subcat] = merged.Filters
 		log.Printf("[schema-scraper] Subcategory '%s': successfully merged %d merchants into 1 schema (%d filter groups)",
 			subcat, len(schemas), len(merged.Filters))
+
+		// Validation: print exact filter group names for Outillage à main
+		if subcat == "Outillage à main" || subcat == types.SubcatOutillageMain {
+			names := make([]string, 0, len(merged.Filters))
+			for name := range merged.Filters {
+				names = append(names, name)
+			}
+			log.Printf("[schema-scraper] Outillage à main filter groups: %v", names)
+		}
 	}
 
 	return results

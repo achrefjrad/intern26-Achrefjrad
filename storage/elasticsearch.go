@@ -1302,6 +1302,81 @@ func (es *ElasticsearchStorage) AppendProducts(ctx context.Context, products []m
 	return nil
 }
 
+func (es *ElasticsearchStorage) GetFilterCounts(category, subcategory string) (map[string]map[string]int, error) {
+	if !es.clientAvailable() {
+		return nil, fmt.Errorf("elasticsearch client not initialized")
+	}
+
+	filters := []map[string]interface{}{
+		{"term": map[string]interface{}{"subcategory": subcategory}},
+	}
+
+	body := map[string]interface{}{
+		"query": map[string]interface{}{
+			"bool": map[string]interface{}{
+				"filter": filters,
+			},
+		},
+		"size": 0,
+	}
+
+	if aggs := buildSpecAggregations(category); aggs != nil {
+		body["aggs"] = aggs
+	} else {
+		return nil, fmt.Errorf("no spec fields defined for category %s", category)
+	}
+
+	queryJSON, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling ES filter counts query: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := es.client.Search(
+		es.client.Search.WithContext(ctx),
+		es.client.Search.WithIndex("products"),
+		es.client.Search.WithBody(strings.NewReader(string(queryJSON))),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch filter counts error: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return nil, fmt.Errorf("elasticsearch filter counts response error: %s", res.String())
+	}
+
+	var sr esSearchResponse
+	if err := json.NewDecoder(res.Body).Decode(&sr); err != nil {
+		return nil, fmt.Errorf("decoding ES filter counts response: %w", err)
+	}
+
+	result := make(map[string]map[string]int)
+	for aggName, raw := range sr.Aggregations {
+		if !strings.HasPrefix(aggName, "spec_") {
+			continue
+		}
+		var aggResult esAggregationResult
+		if err := json.Unmarshal(raw, &aggResult); err != nil {
+			continue
+		}
+		key := strings.TrimPrefix(aggName, "spec_")
+		counts := make(map[string]int, len(aggResult.Buckets))
+		for _, bucket := range aggResult.Buckets {
+			if bucket.Key != "" {
+				counts[bucket.Key] = bucket.DocCount
+			}
+		}
+		if len(counts) > 0 {
+			result[key] = counts
+		}
+	}
+
+	return result, nil
+}
+
 func buildPriceRange(minPrice, maxPrice float64) map[string]interface{} {
 	priceRange := map[string]interface{}{}
 	if minPrice > 0 {
