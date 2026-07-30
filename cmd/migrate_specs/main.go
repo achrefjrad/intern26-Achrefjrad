@@ -41,9 +41,11 @@ func main() {
 	for i := range products {
 		p := &products[i]
 
+		hadSpecs := len(p.Specs) > 0
 		services.EnrichProduct(p)
 
-		if len(p.Specs) == 0 {
+		// Skip only if the product never had specs and none were extracted
+		if !hadSpecs && len(p.Specs) == 0 {
 			continue
 		}
 

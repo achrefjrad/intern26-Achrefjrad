@@ -312,6 +312,40 @@ func extractBrand(name string) string {
 	return ""
 }
 
+var jardimageCategory = "Jardinage & Bricolage"
+
+func NormalizeProductSpecs(specs map[string]string, category string) map[string]string {
+	if specs == nil {
+		return nil
+	}
+	isJardinage := category == jardimageCategory
+	result := make(map[string]string, len(specs))
+	for k, v := range specs {
+		normalizedKey := k
+		switch k {
+		case "memoire":
+			normalizedKey = "ram"
+		case "disque_dur":
+			normalizedKey = "stockage"
+		case "systeme_d_exploitation", "systeme":
+			normalizedKey = "os"
+		case "taille_ecran":
+			normalizedKey = "taille_de_l_ecran"
+		case "volume":
+			normalizedKey = "contenance"
+		case "type_de_peaux":
+			normalizedKey = "type_de_peau"
+		case "besoin_cheveux":
+			normalizedKey = "besoin"
+		}
+		if isJardinage && normalizedKey != "marque" {
+			continue
+		}
+		result[normalizedKey] = v
+	}
+	return result
+}
+
 func EnrichProduct(p *models.Product) {
 	if p.Subcategory == "" {
 		cat, sub := AssignProductCategory(p.Name)
@@ -346,5 +380,5 @@ func EnrichProduct(p *models.Product) {
 		normalized["marque"] = brand
 	}
 
-	p.Specs = normalized
+	p.Specs = NormalizeProductSpecs(normalized, p.Category)
 }

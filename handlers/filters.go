@@ -18,12 +18,35 @@ import (
 var schemaKeyMapping = map[string]string{
 	"memoire":                "ram",
 	"memoire vive (ram)":     "ram",
-	"taille ecran":           "ecran",
-	"taille de l'ecran":      "ecran",
+	"taille ecran":           "taille_de_l_ecran",
+	"taille de l'ecran":      "taille_de_l_ecran",
 	"capacite de stockage":   "stockage",
 	"disque dur":             "stockage",
+	"systeme":                "os",
 	"systeme d'exploitation": "os",
 	"carte graphique":        "carte_graphique",
+	// Santé & Beauté mappings
+	"texture de soin":        "texture",
+	"texture":                "texture",
+	"ingredients actifs":     "ingredients_actifs",
+	"type de peaux":          "type_de_peau",
+	"type de peau":           "type_de_peau",
+	"besoin cheveux":         "besoin",
+	"par besoin":             "besoin",
+	"type de cheveux":        "type_de_cheveux",
+	"type de produits cheveux": "type_de_produit",
+	"type de produit":        "type_de_produit",
+	"contenance":             "contenance",
+	"zone":                   "zone",
+	"finition":               "finition",
+	"categories":             "categorie",
+	"categorie":              "categorie",
+	"outils cheveux":         "outils_cheveux",
+	"puissance":              "puissance",
+	// Accessoires
+	"type":                   "type",
+	"type d'accessoire":      "type",
+	"capacite":               "capacite",
 }
 
 func translateSchemaKey(name string) string {
@@ -88,6 +111,16 @@ func GetFilterSchema(c echo.Context) error {
 		}
 	}
 
+	// Build lowercase-indexed ES counts for case-insensitive matching
+	esCountsLower := make(map[string]map[string]int, len(esCounts))
+	for esKey, valCounts := range esCounts {
+		lowerMap := make(map[string]int, len(valCounts))
+		for val, count := range valCounts {
+			lowerMap[strings.ToLower(val)] = count
+		}
+		esCountsLower[esKey] = lowerMap
+	}
+
 	// Build enriched response
 	enriched := models.EnrichedFilterSchema{
 		Subcategory: subcategory,
@@ -100,7 +133,7 @@ func GetFilterSchema(c echo.Context) error {
 			continue
 		}
 		esKey := translateSchemaKey(groupName)
-		fieldCounts := esCounts[esKey]
+		fieldCounts := esCountsLower[esKey]
 
 		group := models.FilterGroup{
 			Name:   groupName,
@@ -111,7 +144,7 @@ func GetFilterSchema(c echo.Context) error {
 		for _, val := range values {
 			count := 0
 			if fieldCounts != nil {
-				count = fieldCounts[val]
+				count = fieldCounts[strings.ToLower(val)]
 			}
 			group.Values = append(group.Values, models.FilterValue{
 				Value: val,
@@ -119,6 +152,20 @@ func GetFilterSchema(c echo.Context) error {
 			})
 		}
 		enriched.Filters = append(enriched.Filters, group)
+	}
+
+	// Ensure "marque" is at index 0
+	marqueIdx := -1
+	for i, g := range enriched.Filters {
+		if strings.ToLower(g.Key) == "marque" {
+			marqueIdx = i
+			break
+		}
+	}
+	if marqueIdx > 0 {
+		g := enriched.Filters[marqueIdx]
+		enriched.Filters = append(enriched.Filters[:marqueIdx], enriched.Filters[marqueIdx+1:]...)
+		enriched.Filters = append([]models.FilterGroup{g}, enriched.Filters...)
 	}
 
 	return c.JSON(http.StatusOK, enriched)

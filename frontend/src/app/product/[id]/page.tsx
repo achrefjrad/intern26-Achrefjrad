@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ProductDetailResponse } from "@/types/product";
 import { fetchProductById } from "@/services/api";
+import PriceTrendChart from "@/components/PriceTrendChart";
 
 function formatPrice(price: number): string {
   return price.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " TND";
@@ -158,6 +159,10 @@ function ProductDetailContent() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="mb-8 max-w-md">
+          <PriceTrendChart productId={id} />
         </div>
 
         {offers.length > 0 && (

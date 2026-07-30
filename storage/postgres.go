@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,6 +31,25 @@ ON CONFLICT (product_url) DO UPDATE SET
 `
 
 type PostgresStorage struct{}
+
+func recordPricePoint(ctx context.Context, productID string, price float64) {
+	pool := database.GetPool()
+	if pool == nil {
+		return
+	}
+
+	var lastPrice float64
+	err := pool.QueryRow(ctx,
+		`SELECT price FROM price_history WHERE product_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
+		productID,
+	).Scan(&lastPrice)
+	if err != nil || lastPrice != price {
+		pool.Exec(ctx,
+			`INSERT INTO price_history (product_id, price) VALUES ($1, $2)`,
+			productID, price,
+		)
+	}
+}
 
 func (p *PostgresStorage) SaveProduct(ctx context.Context, product *models.Product) error {
 	pool := database.GetPool()
@@ -62,6 +82,8 @@ func (p *PostgresStorage) SaveProduct(ctx context.Context, product *models.Produ
 	if err != nil {
 		return fmt.Errorf("upserting product %s: %w", product.ID, err)
 	}
+
+	recordPricePoint(ctx, product.ID, product.Price)
 	return nil
 }
 
@@ -120,6 +142,10 @@ func (p *PostgresStorage) SaveProducts(ctx context.Context, products []models.Pr
 
 	if err := tx.Commit(writeCtx); err != nil {
 		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	for i := range products {
+		recordPricePoint(context.Background(), products[i].ID, products[i].Price)
 	}
 
 	return nil
@@ -183,6 +209,54 @@ func LoadProductsFromPostgres() ([]models.Product, error) {
 	}
 
 	return products, nil
+}
+
+func BackfillPriceHistory(ctx context.Context) error {
+	pool := database.GetPool()
+	if pool == nil {
+		return fmt.Errorf("database not initialised")
+	}
+
+	var count int
+	err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM price_history`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("checking price_history: %w", err)
+	}
+
+	if count == 0 {
+		rows, err := pool.Query(ctx, `SELECT id, price FROM products WHERE price > 0`)
+		if err != nil {
+			return fmt.Errorf("querying products for backfill: %w", err)
+		}
+		inserted := 0
+		for rows.Next() {
+			var id string
+			var price float64
+			if err := rows.Scan(&id, &price); err != nil {
+				continue
+			}
+			pool.Exec(ctx, `INSERT INTO price_history (product_id, price) VALUES ($1, $2)`, id, price)
+			inserted++
+		}
+		rows.Close()
+		log.Printf("[price-history] backfilled %d initial price points", inserted)
+	}
+
+	res, err := pool.Exec(ctx, `
+		INSERT INTO price_history (product_id, price, recorded_at)
+		SELECT product_id, price, NOW() - INTERVAL '1 day'
+		FROM price_history
+		GROUP BY product_id, price
+		HAVING COUNT(*) = 1
+	`)
+	if err != nil {
+		return fmt.Errorf("inserting yesterday price points: %w", err)
+	}
+	if n := res.RowsAffected(); n > 0 {
+		log.Printf("[price-history] added yesterday price point for %d products", n)
+	}
+
+	return nil
 }
 
 func SaveFilterSchema(ctx context.Context, schema *models.FilterSchema) error {

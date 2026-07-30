@@ -194,9 +194,7 @@ function CheckboxList({
               className="accent-blue-600 rounded"
             />
             <span className="flex-1">{opt.label}</span>
-            {opt.count !== undefined && (
-              <span className="text-[10px] text-gray-400 tabular-nums">({opt.count})</span>
-            )}
+            <span className="text-[10px] text-gray-400 tabular-nums">({opt.count ?? 0})</span>
           </label>
         );
       })}
@@ -321,7 +319,13 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
         const schemaRendered = new Set<string>();
 
         const schemaEls = !schemaLoading && !schemaError
-          ? (schemaGroups || []).map((group) => {
+          ? (schemaGroups || [])
+              .sort((a, b) => {
+                if (a.key === "marque") return -1;
+                if (b.key === "marque") return 1;
+                return 0;
+              })
+              .map((group) => {
               schemaRendered.add(group.key);
               const paramKey = `spec_${group.key}`;
               return (
@@ -344,6 +348,11 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
         const facetEls = facets
           ? Object.entries(facets)
               .filter(([esKey]) => !schemaRendered.has(esKey))
+              .sort(([a], [b]) => {
+                if (a === "marque") return -1;
+                if (b === "marque") return 1;
+                return 0;
+              })
               .map(([esKey, values]) => {
                 if (!values || values.length < 2) return null;
                 const label = FILTER_LABELS[esKey] || esKey.replace(/_/g, " ");
@@ -351,7 +360,7 @@ export default function DynamicFilters({ facets }: { facets?: Record<string, str
                   <CollapsibleSection key={esKey} title={label}>
                     <CheckboxList
                       paramKey={`spec_${esKey}`}
-                      options={values.map((v) => ({ value: v, label: v }))}
+                      options={values.map((v) => ({ value: v, label: v, count: 0 }))}
                       searchParams={searchParams}
                       onToggle={(_key, value, checked) => handleSpecToggle(esKey, value, checked)}
                     />

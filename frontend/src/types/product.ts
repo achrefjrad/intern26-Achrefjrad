@@ -28,3 +28,14 @@ export interface ProductDetailResponse {
   product: Product;
   offers: Product[];
 }
+
+export interface PriceHistoryPoint {
+  date: string;
+  price: number;
+}
+
+export interface PriceHistoryResponse {
+  current_price: number;
+  change_percentage: number;
+  history: PriceHistoryPoint[];
+}

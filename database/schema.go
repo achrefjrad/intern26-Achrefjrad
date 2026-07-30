@@ -90,7 +90,11 @@ func CreateSchema() error {
 
 	log.Println("Products table initialised successfully")
 
-	return createFilterSchemaTable()
+	if err := createFilterSchemaTable(); err != nil {
+		return err
+	}
+
+	return createPriceHistoryTable()
 }
 
 func createFilterSchemaTable() error {
@@ -108,5 +112,25 @@ func createFilterSchemaTable() error {
 		return fmt.Errorf("creating filter_schemas table: %w", err)
 	}
 	log.Println("Filter schemas table initialised successfully")
+	return nil
+}
+
+func createPriceHistoryTable() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const sql = `
+	CREATE TABLE IF NOT EXISTS price_history (
+	    id          SERIAL PRIMARY KEY,
+	    product_id  VARCHAR(20) NOT NULL REFERENCES products(id),
+	    price       NUMERIC(12,2) NOT NULL,
+	    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+	CREATE INDEX IF NOT EXISTS idx_price_history_product_recorded ON price_history(product_id, recorded_at);
+	`
+	if _, err := pool.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("creating price_history table: %w", err)
+	}
+	log.Println("Price history table initialised successfully")
 	return nil
 }

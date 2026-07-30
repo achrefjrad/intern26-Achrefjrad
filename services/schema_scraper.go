@@ -199,6 +199,7 @@ var reStorageGB = regexp.MustCompile(`(?i)^(\d+)\s*(go|gb)$`)
 var reStorageTB = regexp.MustCompile(`(?i)^(\d+)\s*(to|tb)$`)
 var reWarranty = regexp.MustCompile(`(?i)^(\d+)\s*(an?s?|year?s?)?$`)
 var reInch = regexp.MustCompile(`(?i)^([\d.,]+)\s*(pouces?|inch|inches|″|'')?\s*$`)
+var reMAh = regexp.MustCompile(`(?i)^(\d+)\s*(mah)$`)
 
 // -------- Normalization --------
 
@@ -213,6 +214,37 @@ func toTitle(s string) string {
 		prev = r
 	}
 	return string(chars)
+}
+
+func normalizeGroupTitle(title string) string {
+	t := strings.TrimSpace(title)
+	if t == "" {
+		return ""
+	}
+	lower := strings.ToLower(t)
+
+	// Marque: exact match or "brand"
+	if lower == "marque" || lower == "marques" || lower == "brand" {
+		return "Marque"
+	}
+
+	// Stockage: exact match, equals "disque dur", or contains "stockage"
+	if lower == "stockage" || lower == "disque dur" || lower == "capacité de stockage" || lower == "capacite de stockage" || strings.Contains(lower, "stockage") {
+		return "Stockage"
+	}
+
+	// Mémoire / RAM: contains "mémoire", "memoire", or "ram"
+	if strings.Contains(lower, "mémoire") || strings.Contains(lower, "memoire") || strings.Contains(lower, "ram") {
+		return "Mémoire"
+	}
+
+	// Taille d'écran: contains "taille" and ("ecran" / "écran")
+	if strings.Contains(lower, "taille") && (strings.Contains(lower, "ecran") || strings.Contains(lower, "écran")) {
+		return "Taille de l'écran"
+	}
+
+	// Default: Title Case
+	return toTitle(t)
 }
 
 func normalizeFilterValue(groupTitle, rawValue string) string {
@@ -235,6 +267,9 @@ func normalizeFilterValue(groupTitle, rawValue string) string {
 			}
 		}
 	}
+
+	// Battery capacity: "10000mah" / "5000 Mah" → "10000 mAh"
+	v = reMAh.ReplaceAllString(v, "$1 mAh")
 
 	// Screen sizes: "15.6 pouces" / "15.6''" → "15.6\""
 	v = reInch.ReplaceAllString(v, "$1\"")
@@ -614,13 +649,14 @@ func MergeSubcategorySchemas(schemas []*CategorySchema) *CategorySchema {
 			continue
 		}
 		for key, vals := range s.Filters {
-			normalizedKey := strings.ToLower(strings.TrimSpace(key))
-			if normalizedKey == "" {
+			canonicalTitle := normalizeGroupTitle(key)
+			if canonicalTitle == "" {
 				continue
 			}
+			normalizedKey := strings.ToLower(canonicalTitle)
 			// Remember the first-seen casing for the key
 			if _, exists := mergedKeys[normalizedKey]; !exists {
-				mergedKeys[normalizedKey] = key
+				mergedKeys[normalizedKey] = canonicalTitle
 			}
 			canonical := mergedKeys[normalizedKey]
 

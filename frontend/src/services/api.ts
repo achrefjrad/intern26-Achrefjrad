@@ -1,4 +1,4 @@
-import type { PaginatedResponse, Product, ProductDetailResponse } from "@/types/product";
+import type { PaginatedResponse, PriceHistoryResponse, Product, ProductDetailResponse } from "@/types/product";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -57,6 +57,12 @@ export interface FilterSchemaResponse {
   category?: string;
   filters: FilterGroup[];
   updatedAt: string;
+}
+
+export async function fetchPriceHistory(id: string): Promise<PriceHistoryResponse> {
+  const res = await fetch(`${API_BASE}/products/${encodeURIComponent(id)}/price-history`);
+  if (!res.ok) throw new Error(`Failed to fetch price history: ${res.status}`);
+  return res.json();
 }
 
 export async function fetchFilterSchema(subcategory: string): Promise<FilterSchemaResponse> {

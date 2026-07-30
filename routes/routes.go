@@ -10,6 +10,7 @@ func SetupRoutes(e *echo.Echo) {
 	e.GET("/search", handlers.SearchProducts)
 	e.GET("/search/stream", handlers.SearchStream)
 	e.GET("/products/:id", handlers.GetProduct)
+	e.GET("/products/:id/price-history", handlers.GetPriceHistory)
 	e.GET("/suggest", handlers.SuggestProducts)
 	e.GET("/api/filters/schema/:subcategory", handlers.GetFilterSchema)
 }

@@ -616,26 +616,51 @@ func (es *ElasticsearchStorage) SearchBroad(q, sort string, limit int) ([]models
 
 var categorySpecFields = map[string][]string{
 	"Santé & Beauté": {
-		"marque", "type_de_peau", "type_de_cheveux", "besoin", "besoin_cheveux",
-		"texture_de_soin", "zone", "finition", "indice_spf", "contenance",
-		"ingredients_actifs", "parfum", "gamme", "type_de_produit", "probleme_specifique",
+		"marque", "texture", "ingredients_actifs", "type_de_peau", "besoin",
+		"type_de_cheveux", "type_de_produit", "contenance", "zone", "finition",
+		"categorie", "outils_cheveux", "puissance", "selections",
 	},
 	"Informatique": {
 		"marque", "processeur", "ram", "stockage", "ecran", "carte_graphique",
 		"os", "resolution", "connectivite", "format", "couleur",
+		"garantie", "ecran_tactile", "type_de_disque", "taille_de_l_ecran",
+		"taille_ecran", "type_ecran", "memoire", "ref_processeur",
+		"ref_carte_graphique", "taux_de_rafraichissement", "reseau", "son",
+		"camera", "selections", "gamer", "lecteurs_graveurs",
 	},
 	"Téléphonie": {
 		"marque", "ram", "stockage", "ecran", "os", "couleur", "batterie",
 		"resolution_appareil_photo", "connectivite", "double_sim",
+		"garantie", "type_processeur", "taux_de_rafraichissement", "reseau",
+		"taille_de_l_ecran", "memoire",
 	},
 	"Électroménager": {
 		"marque", "capacite", "classe_energetique", "couleur", "dimensions",
 		"type_de_produit", "puissance", "nombre_de_programmes", "niveau_sonore",
 	},
 	"Jardinage & Bricolage": {
-		"marque", "puissance", "tension", "batterie", "pression", "capacite",
-		"largeur_coupe", "type_de_produit",
+		"marque",
 	},
+	"Uncategorized": {
+		"marque",
+	},
+}
+
+// subcategorySpecFields overrides categorySpecFields for specific subcategories.
+var subcategorySpecFields = map[string][]string{
+	"Accessoires": {
+		"marque", "couleur", "capacite", "type", "garantie", "connectivite", "puissance",
+	},
+}
+
+func resolveSpecFields(category, subcategory string) ([]string, bool) {
+	if subcategory != "" {
+		if fields, ok := subcategorySpecFields[subcategory]; ok {
+			return fields, true
+		}
+	}
+	fields, ok := categorySpecFields[category]
+	return fields, ok
 }
 
 type esAggregationBucket struct {
@@ -647,8 +672,8 @@ type esAggregationResult struct {
 	Buckets []esAggregationBucket `json:"buckets"`
 }
 
-func buildSpecAggregations(category string) map[string]interface{} {
-	fields, ok := categorySpecFields[category]
+func buildSpecAggregations(category, subcategory string) map[string]interface{} {
+	fields, ok := resolveSpecFields(category, subcategory)
 	if !ok {
 		return nil
 	}
@@ -664,17 +689,32 @@ func buildSpecAggregations(category string) map[string]interface{} {
 	return aggs
 }
 
-func parseSpecFacets(aggs map[string]json.RawMessage) map[string][]string {
+func parseSpecFacets(aggs map[string]json.RawMessage, category, subcategory string) map[string][]string {
 	facets := make(map[string][]string)
+	whitelist, hasWhitelist := resolveSpecFields(category, subcategory)
+
 	for aggName, raw := range aggs {
 		if !strings.HasPrefix(aggName, "spec_") {
 			continue
+		}
+		key := strings.TrimPrefix(aggName, "spec_")
+		// Strict whitelist: discard any spec bucket not in categorySpecFields
+		if hasWhitelist {
+			allowed := false
+			for _, f := range whitelist {
+				if f == key {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
 		}
 		var result esAggregationResult
 		if err := json.Unmarshal(raw, &result); err != nil {
 			continue
 		}
-		key := strings.TrimPrefix(aggName, "spec_")
 		var values []string
 		for _, bucket := range result.Buckets {
 			if bucket.Key != "" {
@@ -849,7 +889,7 @@ func (es *ElasticsearchStorage) Search(query string, category, subcategory, sort
 	}
 
 	if category != "" {
-		if aggs := buildSpecAggregations(category); aggs != nil {
+	if aggs := buildSpecAggregations(category, subcategory); aggs != nil {
 			body["aggs"] = aggs
 		}
 	}
@@ -907,7 +947,7 @@ func (es *ElasticsearchStorage) Search(query string, category, subcategory, sort
 
 	products := es.esHitsToProducts(&sr)
 
-	facets := parseSpecFacets(sr.Aggregations)
+	facets := parseSpecFacets(sr.Aggregations, category, subcategory)
 
 	totalPages := total / limit
 	if total%limit > 0 {
@@ -1320,7 +1360,7 @@ func (es *ElasticsearchStorage) GetFilterCounts(category, subcategory string) (m
 		"size": 0,
 	}
 
-	if aggs := buildSpecAggregations(category); aggs != nil {
+		if aggs := buildSpecAggregations(category, subcategory); aggs != nil {
 		body["aggs"] = aggs
 	} else {
 		return nil, fmt.Errorf("no spec fields defined for category %s", category)
@@ -1353,16 +1393,30 @@ func (es *ElasticsearchStorage) GetFilterCounts(category, subcategory string) (m
 		return nil, fmt.Errorf("decoding ES filter counts response: %w", err)
 	}
 
+	whitelist, hasWhitelist := resolveSpecFields(category, subcategory)
 	result := make(map[string]map[string]int)
 	for aggName, raw := range sr.Aggregations {
 		if !strings.HasPrefix(aggName, "spec_") {
 			continue
 		}
+		key := strings.TrimPrefix(aggName, "spec_")
+		// Strict whitelist: discard any spec bucket not in categorySpecFields
+		if hasWhitelist {
+			allowed := false
+			for _, f := range whitelist {
+				if f == key {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
 		var aggResult esAggregationResult
 		if err := json.Unmarshal(raw, &aggResult); err != nil {
 			continue
 		}
-		key := strings.TrimPrefix(aggName, "spec_")
 		counts := make(map[string]int, len(aggResult.Buckets))
 		for _, bucket := range aggResult.Buckets {
 			if bucket.Key != "" {

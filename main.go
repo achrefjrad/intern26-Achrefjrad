@@ -64,6 +64,10 @@ func main() {
 	storage.InitES(esStore)
 	initESIndex(esStore)
 
+	if err := storage.BackfillPriceHistory(context.Background()); err != nil {
+		e.Logger.Warnf("Failed to backfill price history: %v", err)
+	}
+
 	if err := esStore.InitializeScrapeHistoryIndex(); err != nil {
 		e.Logger.Warnf("Failed to initialize scrape_history index: %v", err)
 	}

@@ -33,3 +33,14 @@ type ProductDetailResponse struct {
 	Product Product   `json:"product"`
 	Offers  []Product `json:"offers"`
 }
+
+type PriceHistoryPoint struct {
+	Date  string  `json:"date"`
+	Price float64 `json:"price"`
+}
+
+type PriceHistoryResponse struct {
+	CurrentPrice     float64            `json:"current_price"`
+	ChangePercentage float64            `json:"change_percentage"`
+	History          []PriceHistoryPoint `json:"history"`
+}
